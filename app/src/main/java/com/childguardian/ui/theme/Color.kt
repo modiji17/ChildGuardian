@@ -1,4 +1,4 @@
-package com.parentalcontrol.childguardian.ui.theme
+package com.childguardian.ui.theme
 
 import androidx.compose.ui.graphics.Color
 

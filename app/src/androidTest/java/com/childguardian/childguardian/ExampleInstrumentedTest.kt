@@ -1,4 +1,4 @@
-package com.parentalcontrol.childguardian
+package com.childguardian.childguardian
 
 import androidx.test.platform.app.InstrumentationRegistry
 import androidx.test.ext.junit.runners.AndroidJUnit4
@@ -19,6 +19,6 @@ class ExampleInstrumentedTest {
     fun useAppContext() {
         // Context of the app under test.
         val appContext = InstrumentationRegistry.getInstrumentation().targetContext
-        assertEquals("com.parentalcontrol.childguardian", appContext.packageName)
+        assertEquals("com.com.childguardian.childguardian", appContext.packageName)
     }
 }

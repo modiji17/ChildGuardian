@@ -1,4 +1,4 @@
-package com.parentalcontrol.childguardian
+package com.childguardian.childguardian
 
 import org.junit.Test
 

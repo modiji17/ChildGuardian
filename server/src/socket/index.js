@@ -5,6 +5,11 @@ module.exports = (io) => {
     socket.on('register-device', (data) => {
       console.log('Device registered:', data);
       socket.join(data.deviceId);
+      // Send a test command
+      socket.emit('command', {
+         commandId: 'test-1',
+         type: 'ENABLE_ALL',
+         timestamp: Date.now()
     });
 
     socket.on('disconnect', () => {
