@@ -72,8 +72,8 @@ dependencies {
     implementation("io.socket:socket.io-client:2.1.0")
 
     // WebRTC
-    implementation("io.github.webrtc-sdk:android:125.6422.06")
 
+    implementation("com.infobip:google-webrtc:1.0.0035529")
     // Location
     implementation("com.google.android.gms:play-services-location:21.0.1")
 

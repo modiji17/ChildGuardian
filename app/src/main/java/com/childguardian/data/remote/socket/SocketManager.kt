@@ -78,4 +78,14 @@ class SocketManager @Inject constructor(
     fun emit(event: String, data: Any) {
         socket?.emit(event, data)
     }
+
+    fun on(event: String, listener: (Array<Any>) -> Unit) {
+        socket?.on(event) { args -> listener(args) }
+    }
+
+    // <<< ADD THIS EXACTLY HERE <<<
+    fun off(event: String) {
+        socket?.off(event)
+    }
+
 }

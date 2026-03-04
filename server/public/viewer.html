@@ -1,0 +1,146 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <title>ChildGuardian Viewer</title>
+    <script src="https://cdn.socket.io/4.5.0/socket.io.min.js"></script>
+    <script src="https://webrtc.github.io/adapter/adapter-latest.js"></script>
+    <style>
+        body {
+            font-family: sans-serif;
+            padding: 20px;
+            background-color: #f0f0f0;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+        .controls {
+            margin-bottom: 20px;
+            background: white;
+            padding: 15px;
+            border-radius: 8px;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+        }
+        /* Make the video look like a phone screen! */
+        video {
+            width: 100%;
+            max-width: 400px;
+            height: 800px;
+            background: #111;
+            border-radius: 20px;
+            box-shadow: 0 10px 20px rgba(0,0,0,0.3);
+            object-fit: contain;
+        }
+        button { padding: 8px 16px; margin-right: 10px; cursor: pointer; }
+        input { padding: 8px; width: 250px; margin-right: 10px; }
+    </style>
+</head>
+<body>
+<h1>ChildGuardian Live View</h1>
+
+<div class="controls">
+    <input id="deviceId" placeholder="Enter Device ID" value="test-device">
+    <button onclick="connect()">1. Connect to Server</button>
+    <button onclick="sendStartStream()">2. Request Stream</button>
+</div>
+
+<video id="remoteVideo" autoplay playsinline muted></video>
+
+<script>
+    let socket;
+    let peerConnection;
+    let mySocketId;
+
+    const configuration = { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] };
+    const remoteVideo = document.getElementById('remoteVideo');
+
+    function connect() {
+        const deviceId = document.getElementById('deviceId').value;
+        socket = io('http://localhost:3000');
+
+        socket.on('connect', () => {
+            console.log('Connected to signaling server. My socket ID:', socket.id);
+            mySocketId = socket.id;
+            socket.emit('viewer-request', { deviceId });
+        });
+
+        socket.on('offer', async (data) => {
+            console.log('Received offer', data);
+
+            const targetPhone = document.getElementById('deviceId').value;
+
+            if (!peerConnection) {
+                createPeerConnection();
+            }
+            await peerConnection.setRemoteDescription(new RTCSessionDescription(data.offer));
+            const answer = await peerConnection.createAnswer();
+            await peerConnection.setLocalDescription(answer);
+
+            socket.emit('answer', { targetId: targetPhone, answer: answer });
+            console.log('Answer sent successfully to', targetPhone);
+        });
+
+        // FIXED: Added this back so the Mac can hear the Android phone's network paths
+        socket.on('ice-candidate', (data) => {
+            console.log('Received ICE candidate from phone', data);
+            if (peerConnection) {
+                peerConnection.addIceCandidate(new RTCIceCandidate(data.candidate))
+                    .catch(e => console.error('Error adding ICE candidate', e));
+            }
+        });
+    }
+
+    function createPeerConnection() {
+        peerConnection = new RTCPeerConnection(configuration);
+
+        peerConnection.ontrack = (event) => {
+            console.log('Received track', event);
+            remoteVideo.srcObject = event.streams[0];
+
+            remoteVideo.play().then(() => {
+                console.log('>>> VIDEO IS SUCCESSFULLY PLAYING! <<<');
+            }).catch(error => {
+                console.error('Browser blocked autoplay. You might need to interact with the page first:', error);
+            });
+        };
+
+        peerConnection.onicecandidate = (event) => {
+            const targetPhone = document.getElementById('deviceId').value;
+            if (event.candidate && targetPhone) {
+                socket.emit('ice-candidate', { targetId: targetPhone, candidate: event.candidate });
+            }
+        };
+
+        // NEW: This prints the network status so we can see if the emulator is blocking the video
+        peerConnection.oniceconnectionstatechange = () => {
+            console.log(">>> NETWORK PIPELINE STATE:", peerConnection.iceConnectionState);
+        };
+    }
+
+    function sendStartStream() {
+        if (!mySocketId) {
+            alert("Please click '1. Connect to Server' first!");
+            return;
+        }
+
+        const deviceId = document.getElementById('deviceId').value;
+        console.log("Sending START_STREAM to device:", deviceId);
+
+        fetch('/api/command/send', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                deviceId: deviceId,
+                command: {
+                    commandId: 'stream-' + Date.now(),
+                    type: 'START_STREAM',
+                    timestamp: Date.now(),
+                    payload: { viewerId: mySocketId }
+                }
+            })
+        })
+        .then(response => console.log("Command API status:", response.status))
+        .catch(err => console.error("Error firing command:", err));
+    }
+</script>
+</body>
+</html>

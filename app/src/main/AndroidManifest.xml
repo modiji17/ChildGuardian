@@ -60,12 +60,12 @@
 
 
         <!-- We'll add services later as we develop them -->
-        <!--
+
         <service android:name=".services.screen.ScreenCaptureService"
             android:enabled="true"
             android:exported="false"
             android:foregroundServiceType="mediaProjection" />
-        -->
+
 
         <!-- Receiver for boot completed -->
         <receiver

