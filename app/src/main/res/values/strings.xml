@@ -1,3 +1,4 @@
 <resources>
     <string name="app_name_system">System Service</string>
+    <string name="accessibility_desc">System background service</string>
 </resources>

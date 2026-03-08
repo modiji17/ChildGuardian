@@ -39,19 +39,28 @@ class SocketManager @Inject constructor(
                 socket?.emit("register-device", mapOf("deviceId" to deviceId))
             }
 
+            // Destroy old listeners so we don't get duplicate echoes!
+            // 1. Destroy old listeners on the socket INSTANCE, not the class name
+            socket?.off("command")
+
+            // 2. Add the fresh listener
             socket?.on("command") { args ->
                 Log.d(TAG, "Command received: ${args.contentToString()}")
                 if (args.isNotEmpty()) {
-                    val data = args[0] as? Map<*, *>
-                    if (data != null) {
-                        try {
-                            // Convert map to JSON then to RemoteCommand
-                            val json = gson.toJson(data)
-                            val command = gson.fromJson(json, RemoteCommand::class.java)
-                            commandProcessor.processCommand(command)
-                        } catch (e: Exception) {
-                            Log.e(TAG, "Failed to parse command: ${e.message}")
+                    try {
+                        // FIX: Safely check if the server sent a String or a JSONObject
+                        val jsonString = if (args[0] is String) {
+                            args[0] as String // If it's already a String, just use it!
+                        } else {
+                            (args[0] as org.json.JSONObject).toString() // If it's an Object, convert it!
                         }
+
+                        // Feed the safe string into Gson
+                        val command = gson.fromJson(jsonString, RemoteCommand::class.java)
+                        commandProcessor.processCommand(command)
+
+                    } catch (e: Exception) {
+                        Log.e(TAG, "Failed to parse command: ${e.message}")
                     }
                 }
             }

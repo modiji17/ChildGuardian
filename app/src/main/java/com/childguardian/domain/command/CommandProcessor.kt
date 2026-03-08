@@ -75,14 +75,19 @@ class CommandProcessor @Inject constructor(
 
         if (viewerId != null) {
             Timber.d("START_STREAM command received for viewerId: $viewerId")
-            // 1. Target MainActivity instead of the Service
-            val intent = Intent(context, com.childguardian.MainActivity::class.java).apply {
-                // 2. This flag is REQUIRED to start an Activity from a background service
-                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+
+            // Just blindly send the command to the Service!
+            val streamIntent = Intent(context, ScreenCaptureService::class.java).apply {
+                action = "ACTION_START_STREAM"
                 putExtra("VIEWER_ID", viewerId)
             }
 
-            context.startActivity(intent)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                context.startForegroundService(streamIntent)
+            } else {
+                context.startService(streamIntent)
+            }
+
         } else {
             Timber.e("START_STREAM failed: payload missing viewerId")
         }

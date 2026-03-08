@@ -1,53 +1,33 @@
 package com.childguardian.services.screen
 
-import android.hardware.display.DisplayManager
-import android.hardware.display.VirtualDisplay
-import android.media.projection.MediaProjection
+import android.app.Activity
+import android.content.Intent
 import android.util.Log
 import javax.inject.Inject
 import javax.inject.Singleton
 
 @Singleton
 class MediaProjectionHolder @Inject constructor() {
-    private var mediaProjection: MediaProjection? = null
-    private var virtualDisplay: VirtualDisplay? = null
+
+    // The vault holds the raw ticket data needed by WebRTC's ScreenCapturerAndroid
+    var permissionIntent: Intent? = null
+    var resultCode: Int = Activity.RESULT_CANCELED
 
     private val tag = "MediaProjectionHolder"
 
-    fun setMediaProjection(projection: MediaProjection) {
-        this.mediaProjection = projection
-        Log.d(tag, "MediaProjection set")
+    fun saveTicket(code: Int, intent: Intent) {
+        this.resultCode = code
+        this.permissionIntent = intent
+        Log.d(tag, ">>> TICKET SECURED IN THE VAULT! Ready for silent streaming. <<<")
     }
 
-    fun createVirtualDisplay(
-        name: String,
-        width: Int,
-        height: Int,
-        dpi: Int,
-        surface: android.view.Surface
-    ): VirtualDisplay? {
-        if (mediaProjection == null) {
-            Log.e(tag, "MediaProjection is null, cannot create virtual display")
-            return null
-        }
-        // If a virtual display already exists, release it first (should not happen normally)
-        virtualDisplay?.release()
-        virtualDisplay = mediaProjection!!.createVirtualDisplay(
-            name,
-            width, height, dpi,
-            DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR,
-            surface,
-            null, null
-        )
-        Log.d(tag, "Virtual display created")
-        return virtualDisplay
+    fun hasTicket(): Boolean {
+        return permissionIntent != null && resultCode == Activity.RESULT_OK
     }
 
-    fun release() {
-        virtualDisplay?.release()
-        virtualDisplay = null
-        mediaProjection?.stop()
-        mediaProjection = null
-        Log.d(tag, "Released MediaProjection and virtual display")
+    fun clearTicket() {
+        permissionIntent = null
+        resultCode = Activity.RESULT_CANCELED
+        Log.d(tag, "Vault cleared.")
     }
 }
