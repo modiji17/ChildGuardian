@@ -14,6 +14,9 @@ class MediaProjectionHolder @Inject constructor() {
     var permissionIntent: Intent? = null
     var resultCode: Int = Activity.RESULT_CANCELED
 
+    // ADDED: Holds the actual running MediaProjection so we can kill it later to prevent crashes
+    private var activeProjection: android.media.projection.MediaProjection? = null
+
     private val tag = "MediaProjectionHolder"
 
     fun saveTicket(code: Int, intent: Intent) {
@@ -22,19 +25,25 @@ class MediaProjectionHolder @Inject constructor() {
         Log.d(tag, ">>> TICKET SECURED IN THE VAULT! Ready for silent streaming. <<<")
     }
 
-    fun clear() {
-        permissionIntent = null
-        // If you saved the result code as a variable (like 'code' or 'resultCode'), set it to 0 or Activity.RESULT_CANCELED here too.
-        Timber.d("Vault manually cleared.")
-    }
 
     fun hasTicket(): Boolean {
         return permissionIntent != null && resultCode == Activity.RESULT_OK
     }
 
-    fun clearTicket() {
+    // ADDED: Call this inside your WebRTCManager right after you create the MediaProjection!
+    fun setActiveProjection(projection: android.media.projection.MediaProjection) {
+        activeProjection = projection
+    }
+
+    fun getMediaProjection(): android.media.projection.MediaProjection? {
+        return activeProjection
+    }
+
+    // UPDATED: This wipes everything clean (Ticket + Hardware Reference)
+    fun clear() {
         permissionIntent = null
         resultCode = Activity.RESULT_CANCELED
-        Log.d(tag, "Vault cleared.")
+        activeProjection = null
+        Timber.d("Vault manually cleared.")
     }
 }

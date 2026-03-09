@@ -112,7 +112,7 @@ class ScreenCaptureService : Service() {
                     // THE FIX: We MUST explicitly kill the old hardware surface before making a new one!
                     // Call whatever method you use to shut down your WebRTC engine here:
                     try {
-                        webRTCManager.release() // (Or .stop(), .onDestroy(), etc. depending on your class)
+                        webRTCManager.stop() // (Or .stop(), .onDestroy(), etc. depending on your class)
                     } catch (e: Exception) {
                         Timber.e("Error shutting down old engine: ${e.message}")
                     }
@@ -274,8 +274,8 @@ class ScreenCaptureService : Service() {
     private fun handleDisconnect() {
         if (isStreaming) {
             isStreaming = false
-            webRTCManager.release()
-            mediaProjectionHolder.clearTicket()
+            webRTCManager.stop()
+            mediaProjectionHolder.clear()
         }
     }
 
@@ -284,7 +284,7 @@ class ScreenCaptureService : Service() {
         socketManager.off("answer")
         socketManager.off("ice-candidate")
         socketManager.off(io.socket.client.Socket.EVENT_DISCONNECT)
-        webRTCManager.release()
+        webRTCManager.stop()
         isStreaming = false
     }
 

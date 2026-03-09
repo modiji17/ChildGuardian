@@ -19,7 +19,10 @@ class WebRTCManager @Inject constructor(
     val eglBaseContext: EglBase.Context = rootEglBase.eglBaseContext
     private lateinit var peerConnectionFactory: PeerConnectionFactory
     private lateinit var videoSource: VideoSource
-    private lateinit var surfaceTextureHelper: SurfaceTextureHelper
+
+    // 1. Make this nullable so we can destroy and recreate it!
+    private var surfaceTextureHelper: SurfaceTextureHelper? = null
+
     private var videoTrack: VideoTrack? = null
     private var peerConnection: PeerConnection? = null
     private var screenCapturer: VideoCapturer? = null
@@ -29,8 +32,8 @@ class WebRTCManager @Inject constructor(
     var onIceCandidate: ((IceCandidate) -> Unit)? = null
     var onSessionDescription: ((SessionDescription) -> Unit)? = null
 
-    val inputSurface: Surface
-        get() = Surface(surfaceTextureHelper.surfaceTexture)
+    val inputSurface: Surface?
+        get() = surfaceTextureHelper?.surfaceTexture?.let { Surface(it) }
 
     init {
         initializeWebRTC()
@@ -52,8 +55,8 @@ class WebRTCManager @Inject constructor(
             .setVideoDecoderFactory(decoderFactory)
             .createPeerConnectionFactory()
 
-        // Create these ONCE for the lifetime of the Singleton app
-        surfaceTextureHelper = SurfaceTextureHelper.create("CaptureThread", eglBaseContext)
+        // We ONLY create the source and track once.
+        // The SurfaceTextureHelper has been moved to startCapture!
         videoSource = peerConnectionFactory.createVideoSource(false)
         videoTrack = peerConnectionFactory.createVideoTrack("screen_track", videoSource)
     }
@@ -61,15 +64,20 @@ class WebRTCManager @Inject constructor(
     fun startCapture(permissionData: Intent, width: Int, height: Int) {
         Timber.d(">>> WebRTCManager: Starting official ScreenCapturerAndroid! <<<")
 
-        if (screenCapturer != null) {
-            try {
-                screenCapturer?.stopCapture()
-                screenCapturer?.dispose()
-            } catch (e: Exception) {
-                Timber.e("Error destroying old capturer: ${e.message}")
-            }
+        // 2. Eradicate any lingering hardware surfaces before starting
+        try {
+            screenCapturer?.stopCapture()
+            screenCapturer?.dispose()
             screenCapturer = null
+
+            surfaceTextureHelper?.dispose()
+            surfaceTextureHelper = null
+        } catch (e: Exception) {
+            Timber.e("Error destroying old capturer: ${e.message}")
         }
+
+        // 3. Generate a brand new, clean hardware surface for this specific stream
+        surfaceTextureHelper = SurfaceTextureHelper.create("CaptureThread", eglBaseContext)
 
         screenCapturer = ScreenCapturerAndroid(permissionData, object : MediaProjection.Callback() {
             override fun onStop() {
@@ -131,14 +139,20 @@ class WebRTCManager @Inject constructor(
         peerConnection?.addIceCandidate(candidate)
     }
 
-    fun release() {
-        try {
-            Timber.d(">>> Shutting down WebRTC Engine... <<<")
+    // Notice we changed the name to "stop" here since that's what your ScreenCaptureService expects!
+    fun stop() {
+        Timber.d(">>> Shutting down WebRTC Engine... <<<")
 
-            // Turn off camera and tunnel, but DO NOT kill the surfaceTextureHelper!
+        try {
+            // Stop and dispose the WebRTC wrapper (This internally stops the MediaProjection!)
             screenCapturer?.stopCapture()
             screenCapturer?.dispose()
             screenCapturer = null
+
+            // 4. THE VITAL FIX: Destroy the hardware surface buffer!
+            // This guarantees the "A resource failed to call Surface.release" crash will never happen.
+            surfaceTextureHelper?.dispose()
+            surfaceTextureHelper = null
 
             peerConnection?.close()
             peerConnection = null
