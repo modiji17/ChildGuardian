@@ -23,6 +23,7 @@ import dagger.hilt.android.AndroidEntryPoint
 import kotlinx.coroutines.launch
 import timber.log.Timber
 import javax.inject.Inject
+import rikka.shizuku.Shizuku // Make sure you have this import at the top
 
 @AndroidEntryPoint
 class MainActivity : AppCompatActivity() {
@@ -62,10 +63,12 @@ class MainActivity : AppCompatActivity() {
             }
 
             // Close the app UI so it runs in the background
-            finish()
+            moveTaskToBack(true) // <--- STEP 2 IS HERE
+
         } else {
             Timber.e("User denied the initial permission.")
-            finish()
+            moveTaskToBack(true) // <--- Added here too just in case!
+
         }
     }
 
@@ -74,14 +77,21 @@ class MainActivity : AppCompatActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        window.setFlags(WindowManager.LayoutParams.FLAG_SECURE, WindowManager.LayoutParams.FLAG_SECURE)
-        setContentView(R.layout.activity_main)
 
-        // Set the flag if launched via remote trigger
-        if (intent?.getBooleanExtra("REMOTE_TRIGGER", false) == true) {
-            shouldPopPermissionBox = true
+        // 1. Listen for Shizuku to successfully connect
+        Shizuku.addBinderReceivedListener {
+            if (Shizuku.checkSelfPermission() != PackageManager.PERMISSION_GRANTED) {
+                Shizuku.requestPermission(1001)
+            }
         }
 
+        if (Shizuku.pingBinder()) {
+            if (Shizuku.checkSelfPermission() != PackageManager.PERMISSION_GRANTED) {
+                Shizuku.requestPermission(1001)
+            }
+        }
+
+        // 2. Safely check the database in the background
         lifecycleScope.launch {
             val deviceInfo = deviceRepository.getDeviceInfoSync()
             if (deviceInfo?.registered == true) {
@@ -89,11 +99,12 @@ class MainActivity : AppCompatActivity() {
                 socketManager.connect(deviceInfo.deviceId)
                 startBackgroundServices()
 
-                // If it wasn't a remote trigger, we still want to pop it on first launch
-                if (!shouldPopPermissionBox) {
-                    shouldPopPermissionBox = true
-                }
-                // Don't call checkAndPopBox() here. Let onResume handle it safely.
+                // Set the flag to true
+                shouldPopPermissionBox = true
+
+                // THE FIX: We MUST call checkAndPopBox() right here!
+                // If onResume() already fired while the database was loading, this catches it.
+                checkAndPopBox()
             } else {
                 performRegistration()
             }
@@ -102,15 +113,22 @@ class MainActivity : AppCompatActivity() {
 
     override fun onNewIntent(intent: Intent?) {
         super.onNewIntent(intent)
+        // ESSENTIAL: Update the Activity's intent so we can read the ADB flags
+        setIntent(intent)
+
         if (intent?.getBooleanExtra("REMOTE_TRIGGER", false) == true) {
-            Timber.d(">>> Woken up by Mac in background! Setting flag... <<<")
+            Timber.d(">>> Woken up by Mac via ADB (onNewIntent)! <<<")
             shouldPopPermissionBox = true
-            // Don't call checkAndPopBox() here. Let onResume handle it.
+
+            // THE FIX: If the app was already in memory, onResume() might not fire again.
+            // We force the box to pop immediately!
+            checkAndPopBox()
         }
     }
 
     override fun onResume() {
         super.onResume()
+        // Catch-all for when you manually open the app or the lifecycle completes normally
         checkAndPopBox()
     }
 

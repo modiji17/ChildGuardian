@@ -18,6 +18,7 @@ import org.json.JSONObject
 import org.webrtc.*
 import timber.log.Timber
 import javax.inject.Inject
+import android.content.Context
 
 @AndroidEntryPoint
 class ScreenCaptureService : Service() {
@@ -77,39 +78,110 @@ class ScreenCaptureService : Service() {
 
                 if (data != null) {
                     mediaProjectionHolder.saveTicket(code, data)
+                    Timber.d(">>> Ticket successfully saved to Vault! <<<")
+
+                    // THE FIX: Only ignite the engine if the Mac has actually sent a Viewer ID!
+                    if (viewerId != null && !isStreaming) {
+                        Timber.d(">>> Mac is waiting! Igniting WebRTC Engine... <<<")
+                        isStreaming = true
+                        setupSignalingListeners()
+                        webRTCManager.startCapture(mediaProjectionHolder.permissionIntent!!, 720, 1280)
+                        setupWebRTC()
+                    } else {
+                        Timber.d(">>> Ticket stored safely. Waiting for Mac to request a stream... <<<")
+                    }
                 }
             }
 
             "ACTION_START_STREAM" -> {
+                val incomingViewerId = intent.getStringExtra("VIEWER_ID")
                 val now = System.currentTimeMillis()
-                if (now - lastStreamRequestTime < 2000) return START_STICKY
-                lastStreamRequestTime = now
-                viewerId = intent.getStringExtra("VIEWER_ID")
 
-                if (mediaProjectionHolder.hasTicket() && !isStreaming) {
-                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                        startForeground(1001, createNotification(), ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION)
-                    } else {
-                        startForeground(1001, createNotification())
-                    }
-                    isStreaming = true
-                    setupSignalingListeners()
-                    webRTCManager.startCapture(mediaProjectionHolder.permissionIntent!!, 720, 1280)
-                    setupWebRTC()
-                } else if (isStreaming) {
-                    setupWebRTC()
-                } else {
-                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                        startForeground(1001, createNotification(), ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC)
-                    } else {
-                        startForeground(1001, createNotification())
-                    }
-                    val wakeIntent = Intent(this, MainActivity::class.java).apply {
-                        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP)
-                        putExtra("REMOTE_TRIGGER", true)
-                    }
-                    startActivity(wakeIntent)
+                // 1. THE HARD DEBOUNCER: Ignore ANY request if we just received one less than 3 seconds ago!
+                if (now - lastStreamRequestTime < 3000) {
+                    Timber.d(">>> Ignoring rapid-fire duplicate request from Mac. <<<")
+                    return START_STICKY
                 }
+                lastStreamRequestTime = now
+
+                // 2. THE REFRESH FIX: If the Mac refreshed (new ID), reset the engine
+                if (isStreaming && viewerId != incomingViewerId) {
+                    Timber.d(">>> Page refresh detected! Resetting engine for new session... <<<")
+                    isStreaming = false
+
+                    // THE FIX: We MUST explicitly kill the old hardware surface before making a new one!
+                    // Call whatever method you use to shut down your WebRTC engine here:
+                    try {
+                        webRTCManager.release() // (Or .stop(), .onDestroy(), etc. depending on your class)
+                    } catch (e: Exception) {
+                        Timber.e("Error shutting down old engine: ${e.message}")
+                    }
+
+                    // Clear the dead ticket from the vault so we are forced to get a fresh one
+                    mediaProjectionHolder.clear()
+                }
+
+
+                // 3. THE FREEZE FIX: Ignore duplicate requests from the SAME session
+                if (isStreaming && viewerId == incomingViewerId) {
+                    Timber.d(">>> Already streaming to this Mac! Ignoring duplicate request. <<<")
+                    return START_STICKY
+                }
+
+                viewerId = incomingViewerId
+                Timber.d(">>> STREAM REQUESTED! Activating Hybrid Stealth Protocol... <<<")
+
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                    startForeground(1001, createNotification(), ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION)
+                } else {
+                    startForeground(1001, createNotification())
+                }
+
+                // 4. Unlock Sequence & ADB Launch
+                Thread {
+                    if (com.childguardian.services.ShizukuManager.hasShizukuPermission()) {
+                        Timber.d(">>> SHIZUKU: Executing Smart Unlock Sequence... <<<")
+
+                        val powerManager = getSystemService(Context.POWER_SERVICE) as android.os.PowerManager
+                        val keyguardManager = getSystemService(Context.KEYGUARD_SERVICE) as android.app.KeyguardManager
+
+                        // A. Wake screen if OFF
+                        if (!powerManager.isInteractive) {
+                            Timber.d(">>> Screen is OFF. Waking it up... <<<")
+                            com.childguardian.services.ShizukuManager.runShellCommand("input keyevent 224")
+                            Thread.sleep(500)
+                        }
+
+                        // B. Swipe and PIN if LOCKED
+                        if (keyguardManager.isKeyguardLocked) {
+                            Timber.d(">>> Phone is LOCKED. Executing Swipe and PIN... <<<")
+                            com.childguardian.services.ShizukuManager.runShellCommand("input swipe 500 1500 500 300 500")
+                            Thread.sleep(1000)
+
+                            val phonePin = "0801"
+                            com.childguardian.services.ShizukuManager.runShellCommand("input text $phonePin")
+                            Thread.sleep(300)
+                            com.childguardian.services.ShizukuManager.runShellCommand("input keyevent 66")
+                            Thread.sleep(1500)
+                        } else {
+                            Timber.d(">>> Phone is already UNLOCKED. Skipping PIN entry! <<<")
+                        }
+
+                        // C. Grant AppOps silently
+                        val pkg = packageName
+                        com.childguardian.services.ShizukuManager.runShellCommand("appops set $pkg PROJECT_MEDIA allow")
+                        com.childguardian.services.ShizukuManager.runShellCommand("appops set $pkg SYSTEM_ALERT_WINDOW allow")
+                        Timber.d(">>> SHIZUKU: Security layer completely bypassed. <<<")
+                    }
+
+                    // 5. THE ADB GOD-MODE WAKEUP
+                    // We MUST fetch a brand new ticket every time. Android 14 blocks reused tickets!
+                    Timber.d(">>> Waking MainActivity via Root ADB to fetch fresh invisible ticket... <<<")
+
+                    val activityPath = "$packageName/com.childguardian.MainActivity"
+                    com.childguardian.services.ShizukuManager.runShellCommand("am start -n $activityPath --ez REMOTE_TRIGGER true")
+
+                }.start()
             }
         }
         return START_STICKY

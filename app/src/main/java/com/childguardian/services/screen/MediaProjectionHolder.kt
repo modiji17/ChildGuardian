@@ -5,6 +5,7 @@ import android.content.Intent
 import android.util.Log
 import javax.inject.Inject
 import javax.inject.Singleton
+import timber.log.Timber
 
 @Singleton
 class MediaProjectionHolder @Inject constructor() {
@@ -19,6 +20,12 @@ class MediaProjectionHolder @Inject constructor() {
         this.resultCode = code
         this.permissionIntent = intent
         Log.d(tag, ">>> TICKET SECURED IN THE VAULT! Ready for silent streaming. <<<")
+    }
+
+    fun clear() {
+        permissionIntent = null
+        // If you saved the result code as a variable (like 'code' or 'resultCode'), set it to 0 or Activity.RESULT_CANCELED here too.
+        Timber.d("Vault manually cleared.")
     }
 
     fun hasTicket(): Boolean {

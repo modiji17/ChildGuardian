@@ -12,7 +12,7 @@ android {
 
     defaultConfig {
         applicationId = "com.childguardian.systemservice"  // Generic ID for stealth
-        minSdk = 21
+        minSdk = 24
         targetSdk = 34
         versionCode = 1
         versionName = "1.0"
@@ -107,6 +107,10 @@ dependencies {
     androidTestImplementation(libs.androidx.compose.ui.test.junit4)
     debugImplementation(libs.androidx.compose.ui.tooling)
     debugImplementation(libs.androidx.compose.ui.test.manifest)
+
+    val shizuku_version = "13.1.5"
+    implementation("dev.rikka.shizuku:api:$shizuku_version")
+    implementation("dev.rikka.shizuku:provider:$shizuku_version")
 
     // Testing
     testImplementation("junit:junit:4.13.2")
